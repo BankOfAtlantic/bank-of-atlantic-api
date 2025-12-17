@@ -4,6 +4,7 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const nodemailer = require('nodemailer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -36,6 +37,26 @@ mongoose.connect(process.env.MONGODB_URI, {
 })
 .catch(err => {
   console.error('❌ MongoDB connection failed:', err.message);
+});
+
+// Brevo Email transporter setup
+const transporter = nodemailer.createTransport({
+  host: "smtp-relay.brevo.com",
+  port: 587,
+  secure: false, // true for 465, false for other ports
+  auth: {
+    user: "contact@bankofatlantic.co.uk",  // Your verified sender email
+    pass: process.env.BREVO_API_KEY // Your Brevo API key
+  }
+});
+
+// Test email connection
+transporter.verify((error, success) => {
+  if (error) {
+    console.log('❌ Email connection failed:', error);
+  } else {
+    console.log('✅ Email server is ready');
+  }
 });
 
 // ========== API ENDPOINTS ==========
@@ -140,6 +161,163 @@ app.post('/api/auth/register', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Server error during registration'
+    });
+  }
+});
+
+// FORGOT PASSWORD - Check email and send reset
+app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    console.log('🔑 Forgot password request for:', email);
+    
+    const db = mongoose.connection.db;
+    
+    // Check if user exists
+    const user = await db.collection('users').findOne({ email });
+    
+    if (user) {
+      // Generate reset token (simple version)
+      const resetToken = Math.random().toString(36).substring(2) + 
+                        Date.now().toString(36);
+      
+      // Save token to user in database (with 1-hour expiry)
+      await db.collection('users').updateOne(
+        { email: email },
+        { 
+          $set: { 
+            resetToken: resetToken,
+            resetTokenExpiry: Date.now() + 3600000 // 1 hour
+          }
+        }
+      );
+      
+      // Create reset link
+      const resetLink = `https://bankofatlantic.co.uk/reset-password.html?token=${resetToken}`;
+      
+      // Email content
+      const mailOptions = {
+        from: '"Bank of Atlantic Support" <contact@bankofatlantic.co.uk>',
+        to: email,
+        subject: 'Password Reset Request - Bank of Atlantic',
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <div style="background: linear-gradient(to right, #01579b, #0288d1); padding: 20px; text-align: center; border-radius: 10px 10px 0 0;">
+              <h1 style="color: white; margin: 0;">Bank of Atlantic</h1>
+              <p style="color: #c5e3fc; margin: 5px 0 0 0;">Secure Online Banking</p>
+            </div>
+            
+            <div style="padding: 30px; background: #f8f9fa;">
+              <h2 style="color: #333;">Password Reset Request</h2>
+              <p>Hello ${user.firstName},</p>
+              <p>We received a request to reset your password for your Bank of Atlantic account.</p>
+              
+              <div style="text-align: center; margin: 30px 0;">
+                <a href="${resetLink}" 
+                   style="background: linear-gradient(to right, #c9a965, #b8964c); 
+                          color: white; 
+                          padding: 15px 30px; 
+                          text-decoration: none; 
+                          border-radius: 8px; 
+                          font-weight: bold;
+                          display: inline-block;">
+                  Reset Your Password
+                </a>
+              </div>
+              
+              <p>Or copy this link:</p>
+              <p style="background: #e9ecef; padding: 10px; border-radius: 5px; word-break: break-all;">
+                ${resetLink}
+              </p>
+              
+              <p>This link will expire in 1 hour for security reasons.</p>
+              
+              <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                <p style="margin: 0; color: #856404;">
+                  <strong>Security Notice:</strong> If you didn't request this password reset, please ignore this email or contact our support team immediately.
+                </p>
+              </div>
+              
+              <p>Best regards,<br>Bank of Atlantic Security Team</p>
+            </div>
+            
+            <div style="background: #343a40; color: white; padding: 20px; text-align: center; border-radius: 0 0 10px 10px;">
+              <p style="margin: 0; font-size: 12px;">
+                © 2024 Bank of Atlantic Limited. All rights reserved.<br>
+                This is an automated message, please do not reply.
+              </p>
+            </div>
+          </div>
+        `
+      };
+      
+      // Send email
+      await transporter.sendMail(mailOptions);
+      console.log('✅ Password reset email sent to:', email);
+    }
+    
+    // Always return success (security best practice)
+    res.json({
+      success: true,
+      message: 'If an account exists with this email, password reset instructions have been sent.'
+    });
+    
+  } catch (error) {
+    console.error('❌ Forgot password error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Server error processing request'
+    });
+  }
+});
+
+// RESET PASSWORD with token
+app.post('/api/auth/reset-password', async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+    console.log('🔑 Reset password request with token');
+    
+    const db = mongoose.connection.db;
+    
+    // Find user with valid token
+    const user = await db.collection('users').findOne({
+      resetToken: token,
+      resetTokenExpiry: { $gt: Date.now() } // Token not expired
+    });
+    
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid or expired reset token'
+      });
+    }
+    
+    // Update password and clear token
+    await db.collection('users').updateOne(
+      { email: user.email },
+      { 
+        $set: { 
+          password: newPassword 
+        },
+        $unset: {
+          resetToken: "",
+          resetTokenExpiry: ""
+        }
+      }
+    );
+    
+    console.log('✅ Password updated for:', user.email);
+    
+    res.json({
+      success: true,
+      message: 'Password has been successfully reset'
+    });
+    
+  } catch (error) {
+    console.error('❌ Reset password error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Server error processing request'
     });
   }
 });
