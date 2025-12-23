@@ -10,7 +10,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ========== BREVO API SETUP ==========
-const brevo = require('@getbrevo/brevo');
+const Brevo = require('@getbrevo/brevo');
 
 // Initialize the API client for v3.0.1
 const defaultClient = brevo.ApiClient.instance;
@@ -19,11 +19,13 @@ const defaultClient = brevo.ApiClient.instance;
 const apiKey = defaultClient.authentications['api-key'];
 apiKey.apiKey = process.env.BREVO_API_KEY; // Your existing key in Render
 
-const apiInstance = new brevo.TransactionalEmailsApi();
+const apiInstance = new Brevo.TransactionalEmailsApi();
 
 // Function to send email via Brevo API
 async function sendEmail(to, subject, htmlContent) {
   try {
+    console.log(`📧 Attempting to send email via Brevo API to: ${to}`);
+
     const sendSmtpEmail = new brevo.SendSmtpEmail({
       sender: {
         email: "contact@bankofatlantic.co.uk",
@@ -31,7 +33,12 @@ async function sendEmail(to, subject, htmlContent) {
       },
       to: [{ email: to }],
       subject: subject,
-      htmlContent: htmlContent
+      htmlContent: htmlContent,
+
+    // Add tracking settings for better debugging
+      headers: {
+        'X-Mailin-custom': 'BankOfAtlantic-API'
+      }
     });
 
     const data = await apiInstance.sendTransacEmail(sendSmtpEmail);
@@ -43,6 +50,8 @@ async function sendEmail(to, subject, htmlContent) {
     if (error.response) {
       console.error('Brevo API response:', error.response.body);
     }
+    // Log full error for debugging
+    console.error('Full error details:', error);
     return { success: false, error: error.message };
   }
 }
@@ -78,6 +87,33 @@ mongoose.connect(process.env.MONGODB_URI, {
 .catch(err => {
   console.error('❌ MongoDB connection failed:', err.message);
 });
+
+// ========== BREVO CONNECTION TEST ==========
+async function testBrevoConnection() {
+  console.log('🔗 Testing Brevo API connection...');
+  
+  try {
+    // Test with a simple request (get account info)
+    const accountApi = new Brevo.AccountApi();
+    const accountInfo = await accountApi.getAccount();
+    
+    console.log('✅ Brevo API connected successfully!');
+    console.log('📊 Account Plan:', accountInfo.plan[0].type);
+    console.log('📧 Email Credits:', accountInfo.plan[0].credits);
+    
+    return true;
+  } catch (error) {
+    console.error('❌ Brevo API connection failed:', error.message);
+    console.log('🔍 Make sure:');
+    console.log('1. BREVO_API_KEY is set in Render environment');
+    console.log('2. The API key has transactional email permissions');
+    console.log('3. Sender email is verified in Brevo dashboard');
+    return false;
+  }
+}
+
+// Test on startup
+testBrevoConnection();
 
 // ========== API ENDPOINTS ==========
 
