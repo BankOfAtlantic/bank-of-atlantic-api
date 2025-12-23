@@ -1,438 +1,281 @@
-// server.js for Render.com
+// =====================
+// server.js (PRODUCTION READY)
+// =====================
+
 require('dotenv').config();
 
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const brevo = require('@getbrevo/brevo');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ========== BREVO API SETUP ==========
-const Brevo = require('@getbrevo/brevo');
-
-// Initialize the API client for v3.0.1
-const defaultClient = brevo.ApiClient.instance;
-
-// Configure API key authorization
-const apiKey = defaultClient.authentications['api-key'];
-apiKey.apiKey = process.env.BREVO_API_KEY; // Your existing key in Render
-
-const apiInstance = new Brevo.TransactionalEmailsApi();
-
-// Function to send email via Brevo API
-async function sendEmail(to, subject, htmlContent) {
-  try {
-    console.log(`📧 Attempting to send email via Brevo API to: ${to}`);
-
-    const sendSmtpEmail = new brevo.SendSmtpEmail({
-      sender: {
-        email: "contact@bankofatlantic.co.uk",
-        name: "Bank of Atlantic Support"
-      },
-      to: [{ email: to }],
-      subject: subject,
-      htmlContent: htmlContent,
-
-    // Add tracking settings for better debugging
-      headers: {
-        'X-Mailin-custom': 'BankOfAtlantic-API'
-      }
-    });
-
-    const data = await apiInstance.sendTransacEmail(sendSmtpEmail);
-    console.log('✅ Email sent successfully via Brevo API to:', to);
-    return { success: true, messageId: data.messageId };
-    
-  } catch (error) {
-    console.error('❌ Brevo API error:', error.message);
-    if (error.response) {
-      console.error('Brevo API response:', error.response.body);
-    }
-    // Log full error for debugging
-    console.error('Full error details:', error);
-    return { success: false, error: error.message };
-  }
+// =====================
+// BASIC SAFETY CHECKS
+// =====================
+if (!process.env.MONGODB_URI) {
+  console.error('❌ MONGODB_URI missing');
+  process.exit(1);
+}
+if (!process.env.BREVO_API_KEY) {
+  console.error('❌ BREVO_API_KEY missing');
+  process.exit(1);
+}
+if (!process.env.JWT_SECRET) {
+  console.error('❌ JWT_SECRET missing');
+  process.exit(1);
 }
 
-// ========== APP SETUP ==========
+// =====================
+// BREVO SETUP
+// =====================
+const defaultClient = brevo.ApiClient.instance;
+defaultClient.authentications['api-key'].apiKey = process.env.BREVO_API_KEY;
+const emailApi = new brevo.TransactionalEmailsApi();
 
-// CORS - Allow your Netlify domain
+// =====================
+// EXPRESS SETUP
+// =====================
+app.use(express.json());
+
 app.use(cors({
   origin: [
     'https://bankofatlantic.co.uk',
     'https://www.bankofatlantic.co.uk',
-    'https://bankofatlantic.netlify.app',  // Your actual Netlify URL
+    'https://bankofatlantic.netlify.app',
     'http://localhost:3000',
     'http://localhost:5500'
   ],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  credentials: true
 }));
 
-app.use(express.json());
+// =====================
+// DATABASE
+// =====================
+mongoose.connect(process.env.MONGODB_URI)
+  .then(() => console.log('✅ MongoDB connected'))
+  .catch(err => {
+    console.error('❌ MongoDB error:', err.message);
+    process.exit(1);
+  });
 
-// MongoDB Connection
-console.log('🔗 Connecting to MongoDB Atlas...');
+// =====================
+// UTILITIES
+// =====================
+function generateToken() {
+  return Math.random().toString(36).substring(2) + Date.now().toString(36);
+}
 
-mongoose.connect(process.env.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-.then(() => {
-  console.log('✅ Connected to MongoDB Atlas!');
-})
-.catch(err => {
-  console.error('❌ MongoDB connection failed:', err.message);
-});
+async function sendEmail(to, subject, html) {
+  const emailData = new brevo.SendSmtpEmail({
+    sender: {
+      email: 'contact@bankofatlantic.co.uk',
+      name: 'Bank of Atlantic'
+    },
+    to: [{ email: to }],
+    subject,
+    htmlContent: html
+  });
 
-// ========== BREVO CONNECTION TEST ==========
-async function testBrevoConnection() {
-  console.log('🔗 Testing Brevo API connection...');
-  
+  await emailApi.sendTransacEmail(emailData);
+}
+
+// =====================
+// AUTH MIDDLEWARE
+// =====================
+function auth(req, res, next) {
+  const header = req.headers.authorization;
+  if (!header) return res.status(401).json({ error: 'No token' });
+
+  const token = header.split(' ')[1];
   try {
-    // Test with a simple request (get account info)
-    const accountApi = new Brevo.AccountApi();
-    const accountInfo = await accountApi.getAccount();
-    
-    console.log('✅ Brevo API connected successfully!');
-    console.log('📊 Account Plan:', accountInfo.plan[0].type);
-    console.log('📧 Email Credits:', accountInfo.plan[0].credits);
-    
-    return true;
-  } catch (error) {
-    console.error('❌ Brevo API connection failed:', error.message);
-    console.log('🔍 Make sure:');
-    console.log('1. BREVO_API_KEY is set in Render environment');
-    console.log('2. The API key has transactional email permissions');
-    console.log('3. Sender email is verified in Brevo dashboard');
-    return false;
+    req.user = jwt.verify(token, process.env.JWT_SECRET);
+    next();
+  } catch {
+    res.status(401).json({ error: 'Invalid token' });
   }
 }
 
-// Test on startup
-testBrevoConnection();
-
-// ========== API ENDPOINTS ==========
-
-// Health check
+// =====================
+// HEALTH
+// =====================
 app.get('/', (req, res) => {
-  res.json({ 
-    success: true, 
-    message: 'Bank of Atlantic API is running',
-    time: new Date().toISOString()
-  });
+  res.json({ success: true, message: 'API running' });
 });
 
-// Test endpoint
-app.get('/api/test', (req, res) => {
-  res.json({ 
-    success: true, 
-    message: 'Backend API is working!',
-    time: new Date().toISOString()
-  });
-});
-
-// Database test
-app.get('/api/test-db', async (req, res) => {
-  try {
-    const db = mongoose.connection.db;
-    const collections = await db.listCollections().toArray();
-    const users = await db.collection('users').find({}).toArray();
-    
-    res.json({
-      success: true,
-      message: 'Database connected!',
-      collections: collections.map(c => c.name),
-      totalUsers: users.length,
-      users: users.map(u => ({
-        name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || 'Unknown',
-        email: u.email || 'No email',
-        type: u.accountType || 'Unknown'
-      }))
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// REGISTRATION - Save to MongoDB
+// =====================
+// REGISTER
+// =====================
 app.post('/api/auth/register', async (req, res) => {
-  try {
-    console.log('📝 Registration attempt:', req.body.email);
-    
-    const db = mongoose.connection.db;
-    
-    // Check if user exists
-    const existingUser = await db.collection('users').findOne({ 
-      email: req.body.email 
-    });
-    
-    if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        error: 'Email already registered'
-      });
-    }
-    
-    // Create new user
-    const newUser = {
-      firstName: req.body.firstName,
-      lastName: req.body.lastName,
-      email: req.body.email,
-      password: req.body.password,
-      phone: req.body.phone || '',
-      address: req.body.address || '',
-      country: req.body.country || '',
-      zip: req.body.zip || '',
-      accountType: req.body.accountType,
-      accountActivated: false,
-      createdAt: new Date(),
-      updatedAt: new Date()
-    };
-    
-    // Save to MongoDB
-    const result = await db.collection('users').insertOne(newUser);
-    
-    console.log('✅ User saved to MongoDB:', newUser.email);
-    
-    // Return success with user data
-    res.json({
-      success: true,
-      message: 'Account created successfully!',
-      user: {
-        _id: result.insertedId,
-        firstName: newUser.firstName,
-        lastName: newUser.lastName,
-        email: newUser.email,
-        accountType: newUser.accountType,
-        accountActivated: false
-      }
-    });
-    
-  } catch (error) {
-    console.error('❌ Registration error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Server error during registration'
-    });
+  const db = mongoose.connection.db;
+  const { firstName, lastName, email, password, accountType } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Missing fields' });
   }
+
+  const existing = await db.collection('users').findOne({ email });
+  if (existing) {
+    return res.status(400).json({ error: 'Email already registered' });
+  }
+
+  const hashedPassword = await bcrypt.hash(password, 12);
+  const verificationToken = generateToken();
+
+  await db.collection('users').insertOne({
+    firstName,
+    lastName,
+    email,
+    password: hashedPassword,
+    accountType,
+    accountActivated: false,
+    verificationToken,
+    verificationExpiry: Date.now() + 24 * 60 * 60 * 1000,
+    createdAt: new Date()
+  });
+
+  const link = `${process.env.FRONTEND_URL}/verify.html?token=${verificationToken}`;
+
+  await sendEmail(
+    email,
+    'Verify your Bank of Atlantic account',
+    `<p>Hello ${firstName},</p>
+     <p>Please verify your account:</p>
+     <a href="${link}">Verify Account</a>`
+  );
+
+  res.json({ success: true, message: 'Verification email sent' });
 });
 
-// FORGOT PASSWORD - Check email and send reset
+// =====================
+// VERIFY EMAIL
+// =====================
+app.post('/api/auth/verify', async (req, res) => {
+  const db = mongoose.connection.db;
+  const { token } = req.body;
+
+  const user = await db.collection('users').findOne({
+    verificationToken: token,
+    verificationExpiry: { $gt: Date.now() }
+  });
+
+  if (!user) {
+    return res.status(400).json({ error: 'Invalid or expired token' });
+  }
+
+  await db.collection('users').updateOne(
+    { email: user.email },
+    {
+      $set: { accountActivated: true },
+      $unset: { verificationToken: '', verificationExpiry: '' }
+    }
+  );
+
+  res.json({ success: true });
+});
+
+// =====================
+// LOGIN
+// =====================
+app.post('/api/auth/login', async (req, res) => {
+  const db = mongoose.connection.db;
+  const { email, password } = req.body;
+
+  const user = await db.collection('users').findOne({ email });
+  if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+
+  if (!user.accountActivated) {
+    return res.status(403).json({ error: 'Account not verified' });
+  }
+
+  const match = await bcrypt.compare(password, user.password);
+  if (!match) return res.status(401).json({ error: 'Invalid credentials' });
+
+  const token = jwt.sign(
+    { id: user._id, email: user.email },
+    process.env.JWT_SECRET,
+    { expiresIn: '1d' }
+  );
+
+  res.json({ success: true, token });
+});
+
+// =====================
+// FORGOT PASSWORD
+// =====================
 app.post('/api/auth/forgot-password', async (req, res) => {
-  try {
-    const { email } = req.body;
-    console.log('🔑 Forgot password request for:', email);
-    
-    const db = mongoose.connection.db;
-    
-    // Check if user exists
-    const user = await db.collection('users').findOne({ email });
-    
-    if (user) {
-      // Generate reset token (simple version)
-      const resetToken = Math.random().toString(36).substring(2) + 
-                        Date.now().toString(36);
-      
-      // Save token to user in database (with 1-hour expiry)
-      await db.collection('users').updateOne(
-        { email: email },
-        { 
-          $set: { 
-            resetToken: resetToken,
-            resetTokenExpiry: Date.now() + 3600000 // 1 hour
-          }
-        }
-      );
-      
-      // Create reset link
-      const resetLink = `https://bankofatlantic.co.uk/reset-password.html?token=${resetToken}`;
-      
-      // Email content
-      const emailHtml = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <div style="background: linear-gradient(to right, #01579b, #0288d1); padding: 20px; text-align: center; border-radius: 10px 10px 0 0;">
-            <h1 style="color: white; margin: 0;">Bank of Atlantic</h1>
-            <p style="color: #c5e3fc; margin: 5px 0 0 0;">Secure Online Banking</p>
-          </div>
-          
-          <div style="padding: 30px; background: #f8f9fa;">
-            <h2 style="color: #333;">Password Reset Request</h2>
-            <p>Hello ${user.firstName},</p>
-            <p>We received a request to reset your password for your Bank of Atlantic account.</p>
-            
-            <div style="text-align: center; margin: 30px 0;">
-              <a href="${resetLink}" 
-                 style="background: linear-gradient(to right, #c9a965, #b8964c); 
-                        color: white; 
-                        padding: 15px 30px; 
-                        text-decoration: none; 
-                        border-radius: 8px; 
-                        font-weight: bold;
-                        display: inline-block;">
-                Reset Your Password
-              </a>
-            </div>
-            
-            <p>Or copy this link:</p>
-            <p style="background: #e9ecef; padding: 10px; border-radius: 5px; word-break: break-all;">
-              ${resetLink}
-            </p>
-            
-            <p>This link will expire in 1 hour for security reasons.</p>
-            
-            <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px;">
-              <p style="margin: 0; color: #856404;">
-                <strong>Security Notice:</strong> If you didn't request this password reset, please ignore this email or contact our support team immediately.
-              </p>
-            </div>
-            
-            <p>Best regards,<br>Bank of Atlantic Security Team</p>
-          </div>
-          
-          <div style="background: #343a40; color: white; padding: 20px; text-align: center; border-radius: 0 0 10px 10px;">
-            <p style="margin: 0; font-size: 12px;">
-              © 2024 Bank of Atlantic Limited. All rights reserved.<br>
-              This is an automated message, please do not reply.
-            </p>
-          </div>
-        </div>
-      `;
-      
-      // Send email via Brevo API
-      const emailResult = await sendEmail(email, 'Password Reset Request - Bank of Atlantic', emailHtml);
-      
-      if (emailResult.success) {
-        console.log('✅ Password reset email sent via Brevo API to:', email);
-      } else {
-        console.log('⚠️ Email sending had issue:', emailResult.error);
-      }
-    }
-    
-    // Always return success (security best practice)
-    res.json({
-      success: true,
-      message: 'If an account exists with this email, password reset instructions have been sent.'
-    });
-    
-  } catch (error) {
-    console.error('❌ Forgot password error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Server error processing request'
-    });
-  }
-});
+  const db = mongoose.connection.db;
+  const { email } = req.body;
 
-// RESET PASSWORD with token
-app.post('/api/auth/reset-password', async (req, res) => {
-  try {
-    const { token, newPassword } = req.body;
-    console.log('🔑 Reset password request with token');
-    
-    const db = mongoose.connection.db;
-    
-    // Find user with valid token
-    const user = await db.collection('users').findOne({
-      resetToken: token,
-      resetTokenExpiry: { $gt: Date.now() } // Token not expired
-    });
-    
-    if (!user) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid or expired reset token'
-      });
-    }
-    
-    // Update password and clear token
+  const user = await db.collection('users').findOne({ email });
+  if (user) {
+    const resetToken = generateToken();
+
     await db.collection('users').updateOne(
-      { email: user.email },
-      { 
-        $set: { 
-          password: newPassword 
-        },
-        $unset: {
-          resetToken: "",
-          resetTokenExpiry: ""
+      { email },
+      {
+        $set: {
+          resetToken,
+          resetExpiry: Date.now() + 3600000
         }
       }
     );
-    
-    console.log('✅ Password updated for:', user.email);
-    
-    res.json({
-      success: true,
-      message: 'Password has been successfully reset'
-    });
-    
-  } catch (error) {
-    console.error('❌ Reset password error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Server error processing request'
-    });
+
+    const link = `${process.env.FRONTEND_URL}/reset-password.html?token=${resetToken}`;
+
+    await sendEmail(
+      email,
+      'Password reset',
+      `<p>Reset your password:</p><a href="${link}">Reset Password</a>`
+    );
   }
+
+  res.json({ success: true });
 });
 
-// LOGIN - Get from MongoDB
-app.post('/api/auth/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    console.log('🔐 Login attempt:', email);
-    
-    const db = mongoose.connection.db;
-    
-    // Find user in MongoDB
-    const user = await db.collection('users').findOne({ email });
-    
-    if (!user) {
-      console.log('❌ User not found:', email);
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid email or password'
-      });
-    }
-    
-    // Check password
-    if (user.password !== password) {
-      console.log('❌ Wrong password for:', email);
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid email or password'
-      });
-    }
-    
-    console.log('✅ Login successful for:', user.email);
-    
-    // Return ACTUAL user data from MongoDB
-    res.json({
-      success: true,
-      message: 'Login successful!',
-      user: {
-        _id: user._id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        accountType: user.accountType || 'domiciliary',
-        accountActivated: user.accountActivated || false
-      },
-      token: 'jwt-token-placeholder'
-    });
-    
-  } catch (error) {
-    console.error('❌ Login error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Server error during login'
-    });
+// =====================
+// RESET PASSWORD
+// =====================
+app.post('/api/auth/reset-password', async (req, res) => {
+  const db = mongoose.connection.db;
+  const { token, newPassword } = req.body;
+
+  const user = await db.collection('users').findOne({
+    resetToken: token,
+    resetExpiry: { $gt: Date.now() }
+  });
+
+  if (!user) {
+    return res.status(400).json({ error: 'Invalid or expired token' });
   }
+
+  const hashed = await bcrypt.hash(newPassword, 12);
+
+  await db.collection('users').updateOne(
+    { email: user.email },
+    {
+      $set: { password: hashed },
+      $unset: { resetToken: '', resetExpiry: '' }
+    }
+  );
+
+  res.json({ success: true });
 });
 
-// Start server
+// =====================
+// PROTECTED TEST ROUTE
+// =====================
+app.get('/api/me', auth, (req, res) => {
+  res.json({ success: true, user: req.user });
+});
+
+// =====================
+// START SERVER
+// =====================
 app.listen(PORT, () => {
-  console.log(`🚀 Bank of Atlantic API running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
