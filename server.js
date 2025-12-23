@@ -10,8 +10,12 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ========== BREVO API SETUP ==========
-// Initialize the API client
+const brevo = require('@getbrevo/brevo');
+
+// Initialize the API client for v3.0.1
 const defaultClient = brevo.ApiClient.instance;
+
+// Configure API key authorization
 const apiKey = defaultClient.authentications['api-key'];
 apiKey.apiKey = process.env.BREVO_API_KEY; // Your existing key in Render
 
