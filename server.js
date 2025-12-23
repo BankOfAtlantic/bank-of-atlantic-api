@@ -4,10 +4,46 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const nodemailer = require('nodemailer');
+const brevo = require('@getbrevo/brevo');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// ========== BREVO API SETUP ==========
+// Initialize the API client
+const defaultClient = brevo.ApiClient.instance;
+const apiKey = defaultClient.authentications['api-key'];
+apiKey.apiKey = process.env.BREVO_API_KEY; // Your existing key in Render
+
+const apiInstance = new brevo.TransactionalEmailsApi();
+
+// Function to send email via Brevo API
+async function sendEmail(to, subject, htmlContent) {
+  try {
+    const sendSmtpEmail = new brevo.SendSmtpEmail({
+      sender: {
+        email: "contact@bankofatlantic.co.uk",
+        name: "Bank of Atlantic Support"
+      },
+      to: [{ email: to }],
+      subject: subject,
+      htmlContent: htmlContent
+    });
+
+    const data = await apiInstance.sendTransacEmail(sendSmtpEmail);
+    console.log('✅ Email sent successfully via Brevo API to:', to);
+    return { success: true, messageId: data.messageId };
+    
+  } catch (error) {
+    console.error('❌ Brevo API error:', error.message);
+    if (error.response) {
+      console.error('Brevo API response:', error.response.body);
+    }
+    return { success: false, error: error.message };
+  }
+}
+
+// ========== APP SETUP ==========
 
 // CORS - Allow your Netlify domain
 app.use(cors({
@@ -37,26 +73,6 @@ mongoose.connect(process.env.MONGODB_URI, {
 })
 .catch(err => {
   console.error('❌ MongoDB connection failed:', err.message);
-});
-
-// Brevo Email transporter setup
-const transporter = nodemailer.createTransport({
-  host: "smtp-relay.brevo.com",
-  port: 587,
-  secure: false, // true for 465, false for other ports
-  auth: {
-    user: "contact@bankofatlantic.co.uk",  // Your verified sender email
-    pass: process.env.BREVO_API_KEY // Your Brevo API key
-  }
-});
-
-// Test email connection
-transporter.verify((error, success) => {
-  if (error) {
-    console.log('❌ Email connection failed:', error);
-  } else {
-    console.log('✅ Email server is ready');
-  }
 });
 
 // ========== API ENDPOINTS ==========
@@ -196,64 +212,64 @@ app.post('/api/auth/forgot-password', async (req, res) => {
       const resetLink = `https://bankofatlantic.co.uk/reset-password.html?token=${resetToken}`;
       
       // Email content
-      const mailOptions = {
-        from: '"Bank of Atlantic Support" <contact@bankofatlantic.co.uk>',
-        to: email,
-        subject: 'Password Reset Request - Bank of Atlantic',
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <div style="background: linear-gradient(to right, #01579b, #0288d1); padding: 20px; text-align: center; border-radius: 10px 10px 0 0;">
-              <h1 style="color: white; margin: 0;">Bank of Atlantic</h1>
-              <p style="color: #c5e3fc; margin: 5px 0 0 0;">Secure Online Banking</p>
-            </div>
-            
-            <div style="padding: 30px; background: #f8f9fa;">
-              <h2 style="color: #333;">Password Reset Request</h2>
-              <p>Hello ${user.firstName},</p>
-              <p>We received a request to reset your password for your Bank of Atlantic account.</p>
-              
-              <div style="text-align: center; margin: 30px 0;">
-                <a href="${resetLink}" 
-                   style="background: linear-gradient(to right, #c9a965, #b8964c); 
-                          color: white; 
-                          padding: 15px 30px; 
-                          text-decoration: none; 
-                          border-radius: 8px; 
-                          font-weight: bold;
-                          display: inline-block;">
-                  Reset Your Password
-                </a>
-              </div>
-              
-              <p>Or copy this link:</p>
-              <p style="background: #e9ecef; padding: 10px; border-radius: 5px; word-break: break-all;">
-                ${resetLink}
-              </p>
-              
-              <p>This link will expire in 1 hour for security reasons.</p>
-              
-              <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px;">
-                <p style="margin: 0; color: #856404;">
-                  <strong>Security Notice:</strong> If you didn't request this password reset, please ignore this email or contact our support team immediately.
-                </p>
-              </div>
-              
-              <p>Best regards,<br>Bank of Atlantic Security Team</p>
-            </div>
-            
-            <div style="background: #343a40; color: white; padding: 20px; text-align: center; border-radius: 0 0 10px 10px;">
-              <p style="margin: 0; font-size: 12px;">
-                © 2024 Bank of Atlantic Limited. All rights reserved.<br>
-                This is an automated message, please do not reply.
-              </p>
-            </div>
+      const emailHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <div style="background: linear-gradient(to right, #01579b, #0288d1); padding: 20px; text-align: center; border-radius: 10px 10px 0 0;">
+            <h1 style="color: white; margin: 0;">Bank of Atlantic</h1>
+            <p style="color: #c5e3fc; margin: 5px 0 0 0;">Secure Online Banking</p>
           </div>
-        `
-      };
+          
+          <div style="padding: 30px; background: #f8f9fa;">
+            <h2 style="color: #333;">Password Reset Request</h2>
+            <p>Hello ${user.firstName},</p>
+            <p>We received a request to reset your password for your Bank of Atlantic account.</p>
+            
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="${resetLink}" 
+                 style="background: linear-gradient(to right, #c9a965, #b8964c); 
+                        color: white; 
+                        padding: 15px 30px; 
+                        text-decoration: none; 
+                        border-radius: 8px; 
+                        font-weight: bold;
+                        display: inline-block;">
+                Reset Your Password
+              </a>
+            </div>
+            
+            <p>Or copy this link:</p>
+            <p style="background: #e9ecef; padding: 10px; border-radius: 5px; word-break: break-all;">
+              ${resetLink}
+            </p>
+            
+            <p>This link will expire in 1 hour for security reasons.</p>
+            
+            <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px;">
+              <p style="margin: 0; color: #856404;">
+                <strong>Security Notice:</strong> If you didn't request this password reset, please ignore this email or contact our support team immediately.
+              </p>
+            </div>
+            
+            <p>Best regards,<br>Bank of Atlantic Security Team</p>
+          </div>
+          
+          <div style="background: #343a40; color: white; padding: 20px; text-align: center; border-radius: 0 0 10px 10px;">
+            <p style="margin: 0; font-size: 12px;">
+              © 2024 Bank of Atlantic Limited. All rights reserved.<br>
+              This is an automated message, please do not reply.
+            </p>
+          </div>
+        </div>
+      `;
       
-      // Send email
-      await transporter.sendMail(mailOptions);
-      console.log('✅ Password reset email sent to:', email);
+      // Send email via Brevo API
+      const emailResult = await sendEmail(email, 'Password Reset Request - Bank of Atlantic', emailHtml);
+      
+      if (emailResult.success) {
+        console.log('✅ Password reset email sent via Brevo API to:', email);
+      } else {
+        console.log('⚠️ Email sending had issue:', emailResult.error);
+      }
     }
     
     // Always return success (security best practice)
