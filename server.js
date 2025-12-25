@@ -9,7 +9,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { ApiClient, TransactionalEmailsApi, SendSmtpEmail } = require('@getbrevo/brevo');
+const fetch = require('node-fetch');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -30,11 +30,39 @@ if (!process.env.JWT_SECRET) {
 }
 
 // =====================
-// BREVO SETUP
+// BREVO EMAIL FUNCTION
 // =====================
-const defaultClient = ApiClient.instance;
-defaultClient.authentications['api-key'].apiKey = process.env.BREVO_API_KEY;
-const emailApi = new TransactionalEmailsApi();
+async function sendEmail(to, subject, html) {
+  try {
+    const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'accept': 'application/json',
+        'api-key': process.env.BREVO_API_KEY,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        sender: {
+          name: 'Bank of Atlantic',
+          email: 'contact@bankofatlantic.co.uk'
+        },
+        to: [{ email: to }],
+        subject: subject,
+        htmlContent: html
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Brevo API error: ${error}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Email sending failed:', error);
+    throw error;
+  }
+}
 
 // =====================
 // EXPRESS SETUP
@@ -67,20 +95,6 @@ mongoose.connect(process.env.MONGODB_URI)
 // =====================
 function generateToken() {
   return Math.random().toString(36).substring(2) + Date.now().toString(36);
-}
-
-async function sendEmail(to, subject, html) {
-  const emailData = new SendSmtpEmail({
-    sender: {
-      email: 'contact@bankofatlantic.co.uk',
-      name: 'Bank of Atlantic'
-    },
-    to: [{ email: to }],
-    subject,
-    htmlContent: html
-  });
-
-  await emailApi.sendTransacEmail(emailData);
 }
 
 // =====================
