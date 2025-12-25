@@ -32,9 +32,9 @@ if (!process.env.JWT_SECRET) {
 // =====================
 // BREVO SETUP
 // =====================
-const defaultClient = brevo.ApiClient.instance;
+const defaultClient = ApiClient.instance;
 defaultClient.authentications['api-key'].apiKey = process.env.BREVO_API_KEY;
-const emailApi = new brevo.TransactionalEmailsApi();
+const emailApi = new TransactionalEmailsApi();
 
 // =====================
 // EXPRESS SETUP
@@ -70,7 +70,7 @@ function generateToken() {
 }
 
 async function sendEmail(to, subject, html) {
-  const emailData = new brevo.SendSmtpEmail({
+  const emailData = new SendSmtpEmail({
     sender: {
       email: 'contact@bankofatlantic.co.uk',
       name: 'Bank of Atlantic'
