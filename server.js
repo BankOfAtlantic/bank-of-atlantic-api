@@ -276,7 +276,6 @@ app.get('/api/me', auth, (req, res) => {
 // =====================
 // START SERVER
 // =====================
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Bank of Atlantic API running on port ${PORT}`);
 });
-
