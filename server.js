@@ -9,7 +9,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const brevo = require('@getbrevo/brevo');
+const { ApiClient, TransactionalEmailsApi, SendSmtpEmail } = require('@getbrevo/brevo');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
