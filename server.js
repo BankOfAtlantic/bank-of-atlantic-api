@@ -148,17 +148,24 @@ app.post('/api/auth/register', async (req, res) => {
   const db = mongoose.connection.db;
   const { firstName, lastName, email, password, accountType } = req.body;
 
+  console.log('📝 Registration attempt:', email);
+  
   if (!email || !password) {
+    console.log('❌ Missing fields');
     return res.status(400).json({ error: 'Missing fields' });
   }
 
   const existing = await db.collection('users').findOne({ email });
   if (existing) {
+    console.log('❌ Email already exists:', email);
     return res.status(400).json({ error: 'Email already registered' });
   }
 
   const hashedPassword = await bcrypt.hash(password, 12);
   const verificationToken = generateToken();
+  
+  console.log('✅ Generated token:', verificationToken.substring(0, 20) + '...');
+  console.log('✅ Expiry:', new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString());
 
   await db.collection('users').insertOne({
     firstName,
@@ -172,17 +179,36 @@ app.post('/api/auth/register', async (req, res) => {
     createdAt: new Date()
   });
 
+  console.log('✅ User saved to database');
+  
   const link = `${process.env.FRONTEND_URL}/verify.html?token=${verificationToken}`;
+  
+  console.log('📧 Sending verification email...');
+  console.log('📧 Link:', link);
 
-  await sendEmail(
-    email,
-    'Verify your Bank of Atlantic account',
-    `<p>Hello ${firstName},</p>
-     <p>Please verify your account:</p>
-     <a href="${link}">Verify Account</a>`
-  );
-
-  res.json({ success: true, message: 'Verification email sent' });
+  try {
+    await sendEmail(
+      email,
+      'Verify your Bank of Atlantic account',
+      `<p>Hello ${firstName},</p>
+       <p>Please verify your account:</p>
+       <a href="${link}">Verify Account</a>
+       <p>This link expires in 24 hours.</p>`
+    );
+    
+    console.log('✅ Email sent successfully to:', email);
+    res.json({ success: true, message: 'Verification email sent' });
+    
+  } catch (error) {
+    console.error('❌ Email failed to send:', error.message);
+    
+    // Delete the user since email failed
+    await db.collection('users').deleteOne({ email });
+    
+    res.status(500).json({ 
+      error: 'Failed to send verification email. Please try again.' 
+    });
+  }
 });
 
 // =====================
@@ -191,25 +217,63 @@ app.post('/api/auth/register', async (req, res) => {
 app.post('/api/auth/verify', async (req, res) => {
   const db = mongoose.connection.db;
   const { token } = req.body;
-
-  const user = await db.collection('users').findOne({
-    verificationToken: token,
-    verificationExpiry: { $gt: Date.now() }
-  });
-
-  if (!user) {
-    return res.status(400).json({ error: 'Invalid or expired token' });
+  
+  console.log('🔐 Verification attempt with token:', token);
+  
+  if (!token) {
+    console.log('❌ No token provided');
+    return res.status(400).json({ error: 'No token provided' });
   }
 
-  await db.collection('users').updateOne(
-    { email: user.email },
-    {
-      $set: { accountActivated: true },
-      $unset: { verificationToken: '', verificationExpiry: '' }
-    }
-  );
+  try {
+    // FIRST: Find user with token
+    const user = await db.collection('users').findOne({
+      verificationToken: token
+    });
 
-  res.json({ success: true });
+    console.log('🔍 User found:', user ? user.email : 'NO USER FOUND');
+    
+    if (!user) {
+      console.log('❌ No user found with this token');
+      return res.status(400).json({ error: 'Invalid verification link' });
+    }
+
+    // SECOND: Check if token expired
+    const now = Date.now();
+    console.log('⏰ Token expiry check:');
+    console.log('   - Token expiry:', new Date(user.verificationExpiry).toISOString());
+    console.log('   - Current time:', new Date(now).toISOString());
+    console.log('   - Is expired?', user.verificationExpiry < now);
+    
+    if (user.verificationExpiry < now) {
+      console.log('❌ Token expired');
+      return res.status(400).json({ error: 'Verification link has expired' });
+    }
+
+    // THIRD: Check if already activated
+    if (user.accountActivated) {
+      console.log('⚠️ Account already activated');
+      return res.status(400).json({ error: 'Account already verified' });
+    }
+
+    // FOURTH: Activate account
+    console.log('✅ Activating account for:', user.email);
+    
+    await db.collection('users').updateOne(
+      { email: user.email },
+      {
+        $set: { accountActivated: true },
+        $unset: { verificationToken: '', verificationExpiry: '' }
+      }
+    );
+
+    console.log('✅ Account activated successfully');
+    res.json({ success: true, message: 'Account verified successfully' });
+
+  } catch (error) {
+    console.error('❌ Verification error:', error);
+    res.status(500).json({ error: 'Server error during verification' });
+  }
 });
 
 // =====================
@@ -308,8 +372,94 @@ app.get('/api/me', auth, (req, res) => {
 });
 
 // =====================
+// REAL PRODUCTION DIAGNOSIS
+// =====================
+app.get('/api/diagnose/verify/:token', async (req, res) => {
+  const db = mongoose.connection.db;
+  const token = req.params.token;
+  
+  console.log('🔧 Production diagnosis for token:', token);
+  
+  try {
+    // 1. Find the user
+    const user = await db.collection('users').findOne({
+      verificationToken: token
+    });
+
+    if (!user) {
+      return res.json({
+        status: 'ERROR',
+        issue: 'TOKEN_NOT_FOUND',
+        message: 'No user found with this verification token',
+        suggestion: 'The token in the URL does not match any user in our database'
+      });
+    }
+
+    // 2. Check token expiry
+    const now = Date.now();
+    const expiryDate = new Date(user.verificationExpiry);
+    const isExpired = user.verificationExpiry < now;
+    
+    if (isExpired) {
+      return res.json({
+        status: 'ERROR',
+        issue: 'TOKEN_EXPIRED',
+        message: 'Verification token has expired',
+        details: {
+          tokenCreated: new Date(user.createdAt).toISOString(),
+          tokenExpired: expiryDate.toISOString(),
+          currentTime: new Date(now).toISOString(),
+          hoursSinceExpiry: Math.round((now - user.verificationExpiry) / 1000 / 60 / 60 * 10) / 10
+        },
+        suggestion: 'Request a new verification email from the login page'
+      });
+    }
+
+    // 3. Check if already activated
+    if (user.accountActivated) {
+      return res.json({
+        status: 'SUCCESS',
+        issue: 'ALREADY_ACTIVATED',
+        message: 'Account is already verified',
+        details: {
+          email: user.email,
+          activated: true
+        },
+        suggestion: 'You can log in directly without verification'
+      });
+    }
+
+    // 4. Token is valid
+    return res.json({
+      status: 'READY',
+      issue: 'VALID_TOKEN',
+      message: 'Token is valid and ready for verification',
+      details: {
+        email: user.email,
+        firstName: user.firstName,
+        tokenValid: true,
+        expiresIn: Math.round((user.verificationExpiry - now) / 1000 / 60 / 60 * 10) / 10 + ' hours'
+      },
+      suggestion: 'Click the verify button to complete the process'
+    });
+
+  } catch (error) {
+    console.error('Diagnosis error:', error);
+    res.status(500).json({
+      status: 'ERROR',
+      issue: 'SERVER_ERROR',
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// =====================
 // DEBUG ENDPOINT
 // =====================
+
+
+
 app.get('/api/debug/config', (req, res) => {
   // Don't show full API key for security
   const apiKeyPreview = process.env.BREVO_API_KEY ? 
