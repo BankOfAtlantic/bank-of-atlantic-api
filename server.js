@@ -33,7 +33,21 @@ if (!process.env.JWT_SECRET) {
 // BREVO EMAIL FUNCTION
 // =====================
 async function sendEmail(to, subject, html) {
+  console.log('🔍 EMAIL DEBUG: Starting to send email to', to);
+  
   try {
+    const emailData = {
+      sender: {
+        name: 'Bank of Atlantic',
+        email: 'contact@bankofatlantic.co.uk'
+      },
+      to: [{ email: to }],
+      subject: subject,
+      htmlContent: html
+    };
+
+    console.log('📤 Sending to Brevo API:', JSON.stringify(emailData, null, 2));
+    
     const response = await fetch('https://api.brevo.com/v3/smtp/email', {
       method: 'POST',
       headers: {
@@ -41,29 +55,29 @@ async function sendEmail(to, subject, html) {
         'api-key': process.env.BREVO_API_KEY,
         'content-type': 'application/json'
       },
-      body: JSON.stringify({
-        sender: {
-          name: 'Bank of Atlantic',
-          email: 'contact@bankofatlantic.co.uk'
-        },
-        to: [{ email: to }],
-        subject: subject,
-        htmlContent: html
-      })
+      body: JSON.stringify(emailData)
     });
 
+    console.log('📨 Brevo API Response Status:', response.status);
+    console.log('📨 Brevo API Response Headers:', Object.fromEntries(response.headers.entries()));
+    
+    const responseText = await response.text();
+    console.log('📨 Brevo API Response Body:', responseText);
+    
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Brevo API error: ${error}`);
+      throw new Error(`Brevo API error ${response.status}: ${responseText}`);
     }
 
-    return await response.json();
+    const result = JSON.parse(responseText);
+    console.log('✅ Email sent successfully:', result.messageId);
+    return result;
+    
   } catch (error) {
-    console.error('Email sending failed:', error);
+    console.error('❌ EMAIL SEND FAILED:', error.message);
+    console.error('❌ Full error:', error);
     throw error;
   }
 }
-
 // =====================
 // EXPRESS SETUP
 // =====================
