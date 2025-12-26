@@ -30,10 +30,17 @@ if (!process.env.JWT_SECRET) {
 }
 
 // =====================
-// BREVO EMAIL FUNCTION
+// BREVO EMAIL FUNCTION (WITH DEBUG LOGGING)
 // =====================
 async function sendEmail(to, subject, html) {
-  console.log('🔍 EMAIL DEBUG: Starting to send email to', to);
+  console.log('📧 DEBUG: Starting sendEmail function');
+  console.log('📧 To:', to);
+  console.log('📧 Subject:', subject);
+  
+  // Trim API key just in case
+  const apiKey = process.env.BREVO_API_KEY.trim();
+  console.log('🔑 API Key (first/last 8 chars):', 
+    apiKey.substring(0, 8) + '...' + apiKey.substring(apiKey.length - 8));
   
   try {
     const emailData = {
@@ -46,38 +53,38 @@ async function sendEmail(to, subject, html) {
       htmlContent: html
     };
 
-    console.log('📤 Sending to Brevo API:', JSON.stringify(emailData, null, 2));
+    console.log('📤 Sending to Brevo API...');
     
     const response = await fetch('https://api.brevo.com/v3/smtp/email', {
       method: 'POST',
       headers: {
         'accept': 'application/json',
-        'api-key': process.env.BREVO_API_KEY,
+        'api-key': apiKey,
         'content-type': 'application/json'
       },
       body: JSON.stringify(emailData)
     });
 
-    console.log('📨 Brevo API Response Status:', response.status);
-    console.log('📨 Brevo API Response Headers:', Object.fromEntries(response.headers.entries()));
+    console.log('📨 Brevo Response Status:', response.status);
+    console.log('📨 Brevo Response Status Text:', response.statusText);
     
     const responseText = await response.text();
-    console.log('📨 Brevo API Response Body:', responseText);
+    console.log('📨 Brevo Response Body:', responseText);
     
     if (!response.ok) {
+      console.error('❌ Brevo API Error:', responseText);
       throw new Error(`Brevo API error ${response.status}: ${responseText}`);
     }
 
-    const result = JSON.parse(responseText);
-    console.log('✅ Email sent successfully:', result.messageId);
-    return result;
+    console.log('✅ Email sent successfully!');
+    return JSON.parse(responseText);
     
   } catch (error) {
-    console.error('❌ EMAIL SEND FAILED:', error.message);
-    console.error('❌ Full error:', error);
+    console.error('❌ Email sending failed completely:', error.message);
     throw error;
   }
 }
+
 // =====================
 // EXPRESS SETUP
 // =====================
