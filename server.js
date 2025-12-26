@@ -301,6 +301,37 @@ app.get('/api/me', auth, (req, res) => {
 });
 
 // =====================
+// DEBUG ENDPOINT
+// =====================
+app.get('/api/debug/config', (req, res) => {
+  // Don't show full API key for security
+  const apiKeyPreview = process.env.BREVO_API_KEY ? 
+    `****${process.env.BREVO_API_KEY.substring(process.env.BREVO_API_KEY.length - 8)}` : 
+    'NOT SET';
+  
+  res.json({
+    environment: {
+      BREVO_API_KEY_SET: !!process.env.BREVO_API_KEY,
+      BREVO_API_KEY_PREVIEW: apiKeyPreview,
+      BREVO_API_KEY_LENGTH: process.env.BREVO_API_KEY ? process.env.BREVO_API_KEY.length : 0,
+      MONGODB_URI_SET: !!process.env.MONGODB_URI,
+      JWT_SECRET_SET: !!process.env.JWT_SECRET,
+      FRONTEND_URL: process.env.FRONTEND_URL || 'NOT SET',
+      NODE_ENV: process.env.NODE_ENV || 'development',
+      PORT: process.env.PORT || 3000
+    },
+    serverInfo: {
+      brevoEndpoint: 'https://api.brevo.com/v3/smtp/email',
+      senderEmail: 'contact@bankofatlantic.co.uk',
+      senderName: 'Bank of Atlantic',
+      nodeVersion: process.version
+    },
+    timestamp: new Date().toISOString(),
+    note: 'API key is masked for security'
+  });
+});
+
+// =====================
 // START SERVER
 // =====================
 app.listen(PORT, '0.0.0.0', () => {
