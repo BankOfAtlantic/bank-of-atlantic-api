@@ -197,7 +197,17 @@ app.post('/api/auth/register', async (req, res) => {
     );
     
     console.log('✅ Email sent successfully to:', email);
-    res.json({ success: true, message: 'Verification email sent' });
+    res.json({ 
+  success: true, 
+  message: 'Verification email sent',
+  user: {
+    firstName: firstName,
+    lastName: lastName,
+    email: email,
+    accountType: accountType,
+    accountActivated: false
+  }
+});
     
   } catch (error) {
     console.error('❌ Email failed to send:', error.message);
@@ -283,23 +293,78 @@ app.post('/api/auth/login', async (req, res) => {
   const db = mongoose.connection.db;
   const { email, password } = req.body;
 
-  const user = await db.collection('users').findOne({ email });
-  if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+  console.log('🔐 Login attempt for:', email);
 
-  if (!user.accountActivated) {
-    return res.status(403).json({ error: 'Account not verified' });
+  try {
+    // Find user by email
+    const user = await db.collection('users').findOne({ email });
+    
+    if (!user) {
+      console.log('❌ User not found:', email);
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    console.log('✅ User found:', user.email);
+    console.log('   - Account activated:', user.accountActivated);
+    console.log('   - User data:', {
+      firstName: user.firstName,
+      lastName: user.lastName,
+      accountType: user.accountType
+    });
+
+    // Check if account is activated
+    if (!user.accountActivated) {
+      console.log('❌ Account not activated:', email);
+      return res.status(403).json({ 
+        error: 'Account not verified. Please check your email for verification link.' 
+      });
+    }
+
+    // Verify password
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) {
+      console.log('❌ Password mismatch for:', email);
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    // Create JWT token
+    const token = jwt.sign(
+      { 
+        id: user._id, 
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName 
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    console.log('✅ Login successful for:', email);
+    console.log('   - Token generated');
+
+    // Return complete response with user data
+    res.json({ 
+      success: true, 
+      token: token,
+      user: {
+        _id: user._id.toString(),
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        accountType: user.accountType,
+        accountActivated: user.accountActivated,
+        createdAt: user.createdAt
+      },
+      message: 'Login successful'
+    });
+
+  } catch (error) {
+    console.error('❌ Login error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Internal server error' 
+    });
   }
-
-  const match = await bcrypt.compare(password, user.password);
-  if (!match) return res.status(401).json({ error: 'Invalid credentials' });
-
-  const token = jwt.sign(
-    { id: user._id, email: user.email },
-    process.env.JWT_SECRET,
-    { expiresIn: '1d' }
-  );
-
-  res.json({ success: true, token });
 });
 
 // =====================
